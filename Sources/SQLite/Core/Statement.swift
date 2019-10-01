@@ -41,17 +41,25 @@ public final class Statement {
 
     init(_ connection: Connection, _ SQL: String) throws {
         self.connection = connection
-        try connection.check(sqlite3_prepare_v2(connection.handle, SQL, -1, &handle, nil))
+		try connection.sync { //VK
+			try connection.check(sqlite3_prepare_v2(connection.handle, SQL, -1, &handle, nil))
+		}
     }
 
     deinit {
-        sqlite3_finalize(handle)
+		try connection.sync { //VK
+        	sqlite3_finalize(handle)
+		}
     }
 
     public lazy var columnCount: Int = Int(sqlite3_column_count(self.handle))
 
-    public lazy var columnNames: [String] = (0..<Int32(self.columnCount)).map {
-        String(cString: sqlite3_column_name(self.handle, $0))
+    public lazy var columnNames: [String] = (0..<Int32(self.columnCount)).map { name in
+        String(cString:
+			(try! connection.sync { //VK
+				sqlite3_column_name(self.handle, name) //$0)
+			})
+		)
     }
 
     /// A cursor pointing to the current row.
@@ -100,23 +108,25 @@ public final class Statement {
     }
 
     fileprivate func bind(_ value: Binding?, atIndex idx: Int) {
-        if value == nil {
-            sqlite3_bind_null(handle, Int32(idx))
-        } else if let value = value as? Blob {
-            sqlite3_bind_blob(handle, Int32(idx), value.bytes, Int32(value.bytes.count), SQLITE_TRANSIENT)
-        } else if let value = value as? Double {
-            sqlite3_bind_double(handle, Int32(idx), value)
-        } else if let value = value as? Int64 {
-            sqlite3_bind_int64(handle, Int32(idx), value)
-        } else if let value = value as? String {
-            sqlite3_bind_text(handle, Int32(idx), value, -1, SQLITE_TRANSIENT)
-        } else if let value = value as? Int {
-            self.bind(value.datatypeValue, atIndex: idx)
-        } else if let value = value as? Bool {
-            self.bind(value.datatypeValue, atIndex: idx)
-        } else if let value = value {
-            fatalError("tried to bind unexpected value \(value)")
-        }
+		try connection.sync { //VK
+			if value == nil {
+				sqlite3_bind_null(handle, Int32(idx))
+			} else if let value = value as? Blob {
+				sqlite3_bind_blob(handle, Int32(idx), value.bytes, Int32(value.bytes.count), SQLITE_TRANSIENT)
+			} else if let value = value as? Double {
+				sqlite3_bind_double(handle, Int32(idx), value)
+			} else if let value = value as? Int64 {
+				sqlite3_bind_int64(handle, Int32(idx), value)
+			} else if let value = value as? String {
+				sqlite3_bind_text(handle, Int32(idx), value, -1, SQLITE_TRANSIENT)
+			} else if let value = value as? Int {
+				self.bind(value.datatypeValue, atIndex: idx)
+			} else if let value = value as? Bool {
+				self.bind(value.datatypeValue, atIndex: idx)
+			} else if let value = value {
+				fatalError("tried to bind unexpected value \(value)")
+			}
+		}
     }
 
     /// - Parameter bindings: A list of parameters to bind to the statement.
@@ -187,8 +197,10 @@ public final class Statement {
     }
 
     fileprivate func reset(clearBindings shouldClear: Bool = true) {
-        sqlite3_reset(handle)
-        if (shouldClear) { sqlite3_clear_bindings(handle) }
+		try connection.sync { //VK
+        	sqlite3_reset(handle)
+        	if (shouldClear) { sqlite3_clear_bindings(handle) }
+		}
     }
 
 }
@@ -208,7 +220,14 @@ public protocol FailableIterator : IteratorProtocol {
 
 extension FailableIterator {
     public func next() -> Element? {
-        return try! failableNext()
+		//VK: crash fix https://github.com/ethansinjin/SQLite.swift/commit/91d84e9cb66a7200f7b8ac9f2ae5f43e975f6d50
+		//VK Q: add throws: 'public func next() -> Element? throws' ???
+		//VK Q: or https://github.com/stephencelis/SQLite.swift/pull/785
+		//orignal: return try! failableNext()
+		if let next = try? failableNext() {
+			return next
+		}
+		return nil
     }
 }
 
@@ -231,7 +250,9 @@ extension Statement : FailableIterator {
 extension Statement : CustomStringConvertible {
 
     public var description: String {
-        return String(cString: sqlite3_sql(handle))
+		return try connection.sync { //VK
+        	return String(cString: sqlite3_sql(handle))
+		}
     }
 
 }
@@ -241,27 +262,41 @@ public struct Cursor {
     fileprivate let handle: OpaquePointer
 
     fileprivate let columnCount: Int
+	
+	fileprivate let connection: Connection //VK
 
     fileprivate init(_ statement: Statement) {
         handle = statement.handle!
         columnCount = statement.columnCount
+		connection = statement.connection
     }
 
     public subscript(idx: Int) -> Double {
-        return sqlite3_column_double(handle, Int32(idx))
+		return try connection.sync { //VK
+        	return sqlite3_column_double(handle, Int32(idx))
+		}
     }
 
     public subscript(idx: Int) -> Int64 {
-        return sqlite3_column_int64(handle, Int32(idx))
+		return try connection.sync { //VK
+        	return sqlite3_column_int64(handle, Int32(idx))
+		}
     }
 
     public subscript(idx: Int) -> String {
-        return String(cString: UnsafePointer(sqlite3_column_text(handle, Int32(idx))))
+		return String(cString: UnsafePointer( (try connection.sync { //VK
+			sqlite3_column_text(handle, Int32(idx))
+			})
+		))
     }
 
     public subscript(idx: Int) -> Blob {
-        if let pointer = sqlite3_column_blob(handle, Int32(idx)) {
-            let length = Int(sqlite3_column_bytes(handle, Int32(idx)))
+        if let pointer = (try connection.sync { //VK
+			sqlite3_column_blob(handle, Int32(idx))
+		}) {
+            let length = try connection.sync { //VK
+				Int(sqlite3_column_bytes(handle, Int32(idx)))
+			}
             return Blob(bytes: pointer, length: length)
         } else {
             // The return value from sqlite3_column_blob() for a zero-length BLOB is a NULL pointer.
@@ -286,7 +321,10 @@ public struct Cursor {
 extension Cursor : Sequence {
 
     public subscript(idx: Int) -> Binding? {
-        switch sqlite3_column_type(handle, Int32(idx)) {
+        switch (try connection.sync { //VK
+			sqlite3_column_type(handle, Int32(idx))
+		})
+		{
         case SQLITE_BLOB:
             return self[idx] as Blob
         case SQLITE_FLOAT:

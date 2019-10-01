@@ -322,6 +322,24 @@ public final class TableBuilder {
     public func column<V : Value>(_ name: Expression<V?>, unique: Bool = false, check: Expression<Bool?>, defaultValue: V, collate: Collation) where V.Datatype == String {
         column(name, V.declaredDatatype, nil, true, unique, check, defaultValue, nil, collate)
     }
+	
+//VK {{
+	public func column<V : Value>(_ name: Expression<V>, primaryKey: Bool, check: Expression<Bool>? = nil, defaultValue: Expression<V>? = nil, collate: Collation) {
+		column(name, V.declaredDatatype, primaryKey ? .default : nil, false, false, check, defaultValue, nil, collate)
+	}
+	
+	public func column<V : Value>(_ name: Expression<V>, primaryKey: Bool, check: Expression<Bool?>, defaultValue: Expression<V>? = nil, collate: Collation) {
+		column(name, V.declaredDatatype, primaryKey ? .default : nil, false, false, check, defaultValue, nil, collate)
+	}
+	
+	public func column<V : Value>(_ name: Expression<V>, primaryKey: PrimaryKey, check: Expression<Bool>? = nil, collate: Collation) where V.Datatype == Int64 {
+		column(name, V.declaredDatatype, primaryKey, false, false, check, nil, nil, collate)
+	}
+	
+	public func column<V : Value>(_ name: Expression<V>, primaryKey: PrimaryKey, check: Expression<Bool?>, collate: Collation) where V.Datatype == Int64 {
+		column(name, V.declaredDatatype, primaryKey, false, false, check, nil, nil, collate)
+	}
+//VK }}
 
     fileprivate func column(_ name: Expressible, _ datatype: String, _ primaryKey: PrimaryKey?, _ null: Bool, _ unique: Bool, _ check: Expressible?, _ defaultValue: Expressible?, _ references: (QueryType, Expressible)?, _ collate: Collation?) {
         definitions.append(definition(name, datatype, primaryKey, null, unique, check, defaultValue, references, collate))

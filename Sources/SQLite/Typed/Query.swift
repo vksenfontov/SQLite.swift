@@ -927,7 +927,17 @@ extension Connection {
             AnyIterator { statement.next().map { Row(columnNames, $0) } }
         }
     }
-    
+	
+	//VK
+	public func prepare(firstQuery: QueryType, _ statementString: String/*, _ bindings: Binding?...*/) throws -> AnySequence<Row> {
+		let statement = try Statement(self, statementString)
+		
+		let columnNames = try columnNamesForQuery(firstQuery)
+		
+		return AnySequence {
+			AnyIterator { statement.next().map { Row(columnNames, $0) } }
+		}
+	}
 
     public func prepareRowIterator(_ query: QueryType) throws -> RowIterator {
         let expression = query.expression
